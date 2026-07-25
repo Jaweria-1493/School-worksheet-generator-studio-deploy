@@ -1,25 +1,27 @@
 """
-SchoolSheet Studio — Professional Worksheet Generator
-Auto-assembled single-file app for deployment (e.g. Hugging Face Spaces).
-
-This file was generated from the SchoolSheet_Studio notebook. All logic is
-identical to the notebook version — only the packaging changed:
-  - No Colab #@param widgets — AI provider + keys are read from environment
-    variables / Space "Secrets" instead (set these in your hosting platform).
-  - No !pip install lines — see requirements.txt instead.
-  - App launches directly when this file runs (`python app.py`).
+SchoolSheet Studio — Professional Worksheet Generator (Streamlit version)
+Deployable for free on Streamlit Community Cloud (share.streamlit.io) —
+no credit card, connects directly to a GitHub repo.
 """
 import os
 import requests
 
 # ------------------------------------------------------------------
-# AI Provider & Keys — configured via environment variables / Secrets
-# (in Hugging Face Spaces: Settings -> Variables and secrets).
-#   AI_PROVIDER          = "anthropic" | "gemini" | "none"   (optional; auto-detected if unset)
-#   ANTHROPIC_API_KEY     = your Anthropic key   (if using Claude)
-#   GEMINI_API_KEY         = your Gemini key      (if using Gemini)
-#   PIXABAY_API_KEY        = optional, for real photo illustrations
+# AI Provider & Keys — configured via Streamlit "Secrets"
+# (App settings -> Secrets, in TOML format, e.g.:
+#    ANTHROPIC_API_KEY = "sk-ant-..."
+#    AI_PROVIDER = "anthropic"
+#  Streamlit loads secrets into os.environ automatically at startup
+#  when they are also mirrored here, so we read from both.)
 # ------------------------------------------------------------------
+try:
+    import streamlit as st
+    for _k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "PIXABAY_API_KEY", "AI_PROVIDER"):
+        if _k in st.secrets and not os.environ.get(_k):
+            os.environ[_k] = str(st.secrets[_k])
+except Exception:
+    pass
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "").strip()
@@ -32,8 +34,6 @@ elif _provider_pref == "gemini" and GEMINI_API_KEY:
     AI_ENABLED = True
     ACTIVE_PROVIDER = "gemini"
 elif _provider_pref in ("none", ""):
-    # Auto-detect when AI_PROVIDER isn't explicitly set: prefer Anthropic,
-    # then Gemini, else disabled.
     if ANTHROPIC_API_KEY:
         AI_ENABLED = True
         ACTIVE_PROVIDER = "anthropic"
@@ -46,12 +46,6 @@ elif _provider_pref in ("none", ""):
 else:
     AI_ENABLED = False
     ACTIVE_PROVIDER = None
-
-if AI_ENABLED:
-    _provider_label = "Anthropic (Claude)" if ACTIVE_PROVIDER == "anthropic" else "Google (Gemini)"
-    print(f"AI provider active: {_provider_label}")
-else:
-    print("No AI provider configured — running in Question Bank-only mode.")
 
 # ------------------------------------------------------------------
 # Urdu Unicode font (Noto Nastaliq Urdu) so Urdu text renders correctly
@@ -68,9 +62,7 @@ if not os.path.exists(URDU_FONT_PATH):
         r.raise_for_status()
         with open(URDU_FONT_PATH, "wb") as f:
             f.write(r.content)
-        print("Urdu font downloaded successfully.")
-    except Exception as e:
-        print("Could not auto-download Urdu font, will fall back to a bundled system font.", e)
+    except Exception:
         URDU_FONT_PATH = None
 
 LATIN_FONT_PATH = None
@@ -81,8 +73,6 @@ try:
         LATIN_FONT_PATH = None
 except Exception:
     LATIN_FONT_PATH = None
-
-print("Setup complete. Urdu font path:", URDU_FONT_PATH)
 
 import pdfplumber
 import docx as docx_lib
@@ -841,26 +831,106 @@ def build_docx_copies(cfg: "WorksheetConfig", base_questions: List[QuestionItem]
 
 print("DOCX renderer ready.")
 
-import gradio as gr
+# =====================================================================================
+#  STREAMLIT UI
+# =====================================================================================
+import streamlit as st
 import tempfile, shutil
 
-APP_NAME = "SchoolSheet Studio"  # Worksheet Generator name — change as you like
+APP_NAME = "SchoolSheet Studio"
 WORK_DIR = "./wg_output"
 os.makedirs(WORK_DIR, exist_ok=True)
 
 SUBJECTS = ["English", "Urdu", "Mathematics", "Science", "Social Studies", "Islamiyat", "Computer Science", "General Knowledge"]
 
+st.set_page_config(page_title=APP_NAME, page_icon="\U0001F4D8", layout="wide")
 
-def build_config(school_name, logo_file, logo_size, cover_color,
-                  grade, subject, topic, language,
-                  q_types, num_q,
-                  q_per_page, spacing, binding_gap, num_copies, copy_mode,
-                  visual_theme,
-                  show_name, show_class, show_roll, show_date):
+if "questions" not in st.session_state:
+    st.session_state.questions = []
+
+st.title(f"\U0001F4D8 {APP_NAME}")
+st.caption("Professional Worksheet Generator — Grades 1 to 10")
+
+if AI_ENABLED:
+    _provider_name = "Anthropic (Claude)" if ACTIVE_PROVIDER == "anthropic" else "Google (Gemini)"
+    st.success(f"AI question generation is **enabled** using **{_provider_name}**.")
+else:
+    st.info(
+        "AI question generation is **off** (no AI provider configured). "
+        "Methods 1 & 2 below need it — use **Method 3: Question Bank** instead, which works with zero API key/cost."
+    )
+
+with st.expander("\U0001F9ED Getting Started — New user? Click here / Naya user yahan click karein", expanded=True):
+    st.markdown("""
+### \U0001F44B Naya user? Yahan se shuru karein — New here? Start with this
+
+**1. Worksheet Settings bharein:** Neeche Grade, Subject, Topic, language aur question types chunein — ye saare 3 methods ke liye common hain.
+
+**2. Questions banayein — 3 tareeqe (methods/tabs) mein se koi ek chunein:**
+- **Method 1 — Curriculum-Based:** Apni file (PDF/DOCX/TXT) upload karein YA sirf Grade/Subject/Topic se generate karein. *(AI zaroori hai)*
+- **Method 2 — Free Content:** Koi bhi text (jaise ChatGPT se copy kiya hua) paste ya upload karein. *(AI zaroori hai)*
+- **Method 3 — Apna Question Bank:** Apni CSV/Excel file upload karein — bilkul free, AI ki zaroorat nahi.
+
+**3. Preview & Export tab mein jaake PDF ya Word format chunein aur "Create Worksheet" dabayein — download button turant mil jayega.**
+""")
+
+def _save_uploaded(uploaded_file):
+    """Streamlit gives file-like objects, not paths — save to a temp path for the existing helpers."""
+    if uploaded_file is None:
+        return None
+    suffix = os.path.splitext(uploaded_file.name)[1]
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=WORK_DIR)
+    tmp.write(uploaded_file.getvalue())
+    tmp.close()
+    return tmp.name
+
+st.subheader("\u2699\ufe0f Worksheet Settings (apply to all methods)")
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    school_name = st.text_input("School Name", "Your School Name")
+    grade = st.selectbox("Grade", GRADES, index=2)
+with c2:
+    subject = st.selectbox("Subject", SUBJECTS, index=0)
+    topic = st.text_input("Topic", placeholder="e.g. Nouns, Photosynthesis, Fractions")
+with c3:
+    language = st.radio("Language", ["English", "Urdu"], horizontal=True)
+    visual_theme = st.selectbox("Visual Theme", THEMES, index=0)
+with c4:
+    cover_color = st.color_picker("Cover Color", "#2563EB")
+    logo_file = st.file_uploader("School Logo (optional)", type=["png", "jpg", "jpeg"])
+
+q_types = st.multiselect("Question Types (select any combination)", QUESTION_TYPES, default=["Choose the Best Option (MCQ)"])
+
+c5, c6, c7, c8 = st.columns(4)
+with c5:
+    num_q = st.number_input("Total Questions", min_value=1, value=10, step=1)
+with c6:
+    q_per_page = st.number_input("Questions per Page (0 = unlimited)", min_value=0, value=0, step=1)
+with c7:
+    num_copies = st.number_input("Number of Copies", min_value=1, value=1, step=1)
+with c8:
+    copy_mode = st.radio("Copy Mode", ["Identical", "Randomized"], horizontal=True)
+
+c9, c10 = st.columns(2)
+with c9:
+    spacing = st.slider("Spacing Between Questions (pt)", 0, 60, 18, step=2)
+with c10:
+    binding_gap = st.slider("Binding Gap (mm)", 0, 40, 0, step=2)
+
+c11, c12, c13, c14 = st.columns(4)
+show_name = c11.checkbox("Show Student Name field", value=True)
+show_class = c12.checkbox("Show Class field", value=True)
+show_roll = c13.checkbox("Show Roll No. field", value=True)
+show_date = c14.checkbox("Show Date field", value=True)
+
+
+def build_cfg():
+    logo_path = _save_uploaded(logo_file) if logo_file else None
     return WorksheetConfig(
         school_name=school_name or "Your School Name",
-        logo_path=logo_file.name if logo_file else None,
-        logo_size_pt=int(logo_size),
+        logo_path=logo_path,
+        logo_size_pt=60,
         cover_color_hex=cover_color,
         grade=str(grade),
         subject=subject,
@@ -879,7 +949,7 @@ def build_config(school_name, logo_file, logo_size, cover_color,
     )
 
 
-def preview_text(questions: List[QuestionItem]) -> str:
+def preview_markdown(questions):
     if not questions:
         return "No questions generated yet."
     out = []
@@ -888,234 +958,114 @@ def preview_text(questions: List[QuestionItem]) -> str:
         if q.options:
             out.append("   " + "   ".join(f"({chr(97+j)}) {o}" for j, o in enumerate(q.options)))
         if q.match_left and q.match_right:
-            out.append(f"   Match: {q.match_left}  ↔  {q.match_right}")
+            out.append(f"   Match: {q.match_left}  \u2194  {q.match_right}")
         if q.image_keyword:
-            out.append(f"   🖼 illustration: {q.image_keyword}")
+            out.append(f"   \U0001F5BC illustration: {q.image_keyword}")
         out.append("")
     return "\n".join(out)
 
 
-if AI_ENABLED:
-    _provider_name = "Anthropic (Claude)" if ACTIVE_PROVIDER == "anthropic" else "Google (Gemini)"
-    AI_STATUS_BANNER = f"✅ AI question generation is **enabled** using **{_provider_name}** (configured in Step 2)."
-else:
-    AI_STATUS_BANNER = (
-        "ℹ️ AI question generation is **off** (no valid AI provider/key set in Step 2). "
-        "Methods 1 & 2 below need it — use **Method 3: Question Bank** instead, which works with zero API key/cost."
+tab1, tab2, tab3, tab4 = st.tabs([
+    "\U0001F4C2 Method 1: Curriculum-Based",
+    "\U0001F4DD Method 2: Free Content",
+    "\U0001F5C2\ufe0f Method 3: Question Bank",
+    "\U0001F441\ufe0f Preview & Export",
+])
+
+with tab1:
+    st.markdown("Use **either** Path A or Path B.")
+    pathA, pathB = st.tabs(["Path A — Upload File + Chapter/Topic/Page", "Path B — Use Grade/Subject/Topic above"])
+    with pathA:
+        m1a_file = st.file_uploader("Upload Curriculum File (PDF/DOCX/TXT)", key="m1a_file")
+        colA1, colA2, colA3 = st.columns(3)
+        m1a_chapter = colA1.text_input("Chapter", key="m1a_chapter")
+        m1a_topic = colA2.text_input("Topic", key="m1a_topic")
+        m1a_page = colA3.text_input("Page No.", key="m1a_page")
+        if st.button("Generate from File \u2728", key="m1a_btn", type="primary"):
+            if not m1a_file:
+                st.warning("Please upload a curriculum file first.")
+            else:
+                try:
+                    path = _save_uploaded(m1a_file)
+                    raw = extract_text_from_file(path)
+                    focus_note = f"\n\n[Focus strictly on: Chapter '{m1a_chapter}', Topic '{m1a_topic}', Page {m1a_page}]"
+                    cfg = build_cfg()
+                    cfg.topic = m1a_topic or cfg.topic
+                    st.session_state.questions = generate_questions_ai(cfg, source_text=raw + focus_note)
+                    st.success(f"Generated {len(st.session_state.questions)} questions.")
+                except RuntimeError as e:
+                    st.error(str(e))
+    with pathB:
+        st.markdown("Uses the Grade / Subject / Topic selected above in Worksheet Settings.")
+        if st.button("Generate from Selection \u2728", key="m1b_btn", type="primary"):
+            try:
+                cfg = build_cfg()
+                st.session_state.questions = generate_questions_ai(cfg, source_text=None)
+                st.success(f"Generated {len(st.session_state.questions)} questions.")
+            except RuntimeError as e:
+                st.error(str(e))
+
+with tab2:
+    m2_text = st.text_area("Paste content here (e.g. from ChatGPT, notes, textbook excerpt)", height=200)
+    m2_file = st.file_uploader("Or upload a file instead", key="m2_file")
+    if st.button("Clean & Generate \u2728", key="m2_btn", type="primary"):
+        raw = m2_text or ""
+        if m2_file:
+            raw += "\n" + extract_text_from_file(_save_uploaded(m2_file))
+        if not raw.strip():
+            st.warning("Please paste text or upload a file first.")
+        else:
+            try:
+                cleaned = clean_pasted_content(raw)
+                cfg = build_cfg()
+                st.session_state.questions = generate_questions_ai(cfg, source_text=cleaned)
+                st.success(f"Generated {len(st.session_state.questions)} questions.")
+            except RuntimeError as e:
+                st.error(str(e))
+
+with tab3:
+    st.markdown(
+        "Upload a CSV or Excel file with columns: `grade, subject, topic, q_type, text, options, "
+        "match_left, match_right, answer, image_keyword`. Use `|` to separate multiple options "
+        "(e.g. `Cat|Dog|Cow|Horse`)."
     )
+    m3_file = st.file_uploader("Upload Question Bank (CSV or XLSX)", key="m3_file")
+    if st.button("Load & Build Worksheet \u2728", key="m3_btn", type="primary"):
+        if not m3_file:
+            st.warning("Please upload a question bank CSV/Excel file first.")
+        else:
+            try:
+                cfg = build_cfg()
+                df = load_question_bank(_save_uploaded(m3_file))
+                questions = questions_from_bank(df, cfg)
+                if not questions:
+                    st.warning("No matching questions found for this Grade/Subject/Topic/Question-Type combination.")
+                else:
+                    st.session_state.questions = questions
+                    st.success(f"Loaded {len(questions)} questions.")
+            except Exception as e:
+                st.error(f"Could not read question bank: {e}")
 
-GETTING_STARTED_GUIDE = """
-### 👋 Naya user? Yahan se shuru karein — New here? Start with this
+with tab4:
+    st.markdown(preview_markdown(st.session_state.questions))
+    export_format = st.radio("Export Format", ["PDF", "Word"], horizontal=True)
+    if st.button("\U0001F4C4 Create Worksheet", type="primary"):
+        if not st.session_state.questions:
+            st.warning("Please generate/preview a worksheet first.")
+        else:
+            cfg = build_cfg()
+            out_dir = tempfile.mkdtemp(dir=WORK_DIR)
+            if export_format == "PDF":
+                paths = build_pdf_copies(cfg, st.session_state.questions, out_dir)
+            else:
+                paths = build_docx_copies(cfg, st.session_state.questions, out_dir)
 
-**1. Worksheet Settings bharein:** Neeche "⚙️ Worksheet Settings" section mein Grade, Subject, Topic, language aur
-question types chunein — ye saare 3 methods ke liye common hain.
-
-**2. Questions banayein — 3 tareeqe (methods) mein se koi ek chunein:**
-- 📂 **Method 1 — Curriculum-Based:** Apni file (PDF/DOCX/TXT) upload karein YA sirf Grade/Subject/Topic se generate karein. *(AI zaroori hai)*
-- 📝 **Method 2 — Free Content:** Koi bhi text (jaise ChatGPT se copy kiya hua) paste ya upload karein — app khud saaf kar dega. *(AI zaroori hai)*
-- 🗂️ **Method 3 — Apna Question Bank:** Apni CSV/Excel file upload karein — bilkul free, AI ki zaroorat nahi.
-
-**3. Preview dekhein aur Export karein:** Neeche "👁️ Preview & Export" section mein PDF ya Word format chunein aur
-**"📄 Create Worksheet"** button dabayein — download link turant mil jayega.
-
-> 💡 **Tip:** Agar Methods 1 ya 2 kaam nahi kar rahe to iska matlab is app ke admin ne AI provider set nahi kiya —
-> seedha Method 3 (Question Bank) use karein, ya admin se AI key add karwayein.
-""".strip()
-
-
-# ---------------- Method 1 : Path A (file + chapter/topic/page) ----------------
-def generate_method1_pathA(file_obj, chapter, topic_a, page_no, *shared_args):
-    if not file_obj:
-        return "⚠️ Please upload a curriculum file first.", None
-    try:
-        raw = extract_text_from_file(file_obj.name)
-        focus_note = f"\n\n[Focus strictly on: Chapter '{chapter}', Topic '{topic_a}', Page {page_no}]"
-        cfg = build_config(*shared_args)
-        cfg.topic = topic_a or cfg.topic
-        questions = generate_questions_ai(cfg, source_text=raw + focus_note)
-        return preview_text(questions), questions
-    except RuntimeError as e:
-        return f"⚠️ {e}", None
-
-
-# ---------------- Method 1 : Path B (grade/subject/topic dropdown) ----------------
-def generate_method1_pathB(*shared_args):
-    try:
-        cfg = build_config(*shared_args)
-        questions = generate_questions_ai(cfg, source_text=None)
-        return preview_text(questions), questions
-    except RuntimeError as e:
-        return f"⚠️ {e}", None
-
-
-# ---------------- Method 2 : paste / upload any content ----------------
-def generate_method2(pasted_text, file_obj, *shared_args):
-    raw = pasted_text or ""
-    if file_obj:
-        raw += "\n" + extract_text_from_file(file_obj.name)
-    if not raw.strip():
-        return "⚠️ Please paste text or upload a file first.", None
-    try:
-        cleaned = clean_pasted_content(raw)
-        cfg = build_config(*shared_args)
-        questions = generate_questions_ai(cfg, source_text=cleaned)
-        return preview_text(questions), questions
-    except RuntimeError as e:
-        return f"⚠️ {e}", None
-
-
-# ---------------- Method 3 : your own question bank (no AI / no key needed) ----------------
-def generate_method3(bank_file, *shared_args):
-    if not bank_file:
-        return "⚠️ Please upload a question bank CSV/Excel file first.", None
-    try:
-        cfg = build_config(*shared_args)
-        df = load_question_bank(bank_file.name)
-        questions = questions_from_bank(df, cfg)
-        if not questions:
-            return ("⚠️ No matching questions found in your bank for this Grade/Subject/Topic/Question-Type "
-                     "combination. Check the values in Worksheet Settings above match your file's columns."), None
-        return preview_text(questions), questions
-    except Exception as e:
-        return f"⚠️ Could not read question bank: {e}", None
-
-
-# ---------------- Final export ----------------
-def export_worksheet(questions_state, export_format, *shared_args):
-    if not questions_state:
-        return None, "⚠️ Please generate/preview a worksheet first."
-    cfg = build_config(*shared_args)
-    out_dir = tempfile.mkdtemp(dir=WORK_DIR)
-    if export_format == "PDF":
-        paths = build_pdf_copies(cfg, questions_state, out_dir)
-    else:
-        paths = build_docx_copies(cfg, questions_state, out_dir)
-
-    if len(paths) == 1:
-        return paths[0], f"✅ Worksheet generated ({export_format}) — {len(paths)} copy."
-    else:
-        zip_path = shutil.make_archive(os.path.join(out_dir, "worksheets"), "zip", out_dir)
-        return zip_path, f"✅ {len(paths)} {export_format} copies generated and zipped."
-
-
-# =====================================================================================
-#  UI LAYOUT
-# =====================================================================================
-with gr.Blocks(title=APP_NAME, theme=gr.themes.Soft()) as app:
-    gr.Markdown(f"# 📘 {APP_NAME}\n### Professional Worksheet Generator — Grades 1 to 10")
-    gr.Markdown(AI_STATUS_BANNER)
-
-    with gr.Accordion("🧭 Getting Started — New user? Click here / Naya user yahan click karein", open=True):
-        gr.Markdown(GETTING_STARTED_GUIDE)
-
-    questions_state = gr.State([])  # holds the last generated List[QuestionItem]
-
-    # ---------------- Branding ----------------
-    with gr.Accordion("🏫 1. School Branding & Cover Page", open=True):
-        with gr.Row():
-            school_name = gr.Textbox(label="School Name", placeholder="e.g. Roots International Schools")
-            logo_file = gr.File(label="Upload School Logo", file_types=["image"])
-            logo_size = gr.Slider(20, 150, value=60, step=5, label="Logo Size (pt)")
-        cover_color = gr.ColorPicker(label="Cover / Header Theme Color", value="#2563EB")
-
-    # ---------------- Shared Controls ----------------
-    with gr.Accordion("⚙️ 2. Worksheet Settings (apply to both methods)", open=True):
-        with gr.Row():
-            grade = gr.Dropdown(GRADES, value="3", label="Grade")
-            subject = gr.Dropdown(SUBJECTS, value="English", label="Subject", allow_custom_value=True)
-            topic = gr.Textbox(label="Topic", placeholder="e.g. Nouns, Photosynthesis, Fractions")
-            language = gr.Radio(["English", "Urdu"], value="English", label="Worksheet Language")
-        with gr.Row():
-            q_types = gr.CheckboxGroup(QUESTION_TYPES, value=["Choose the Best Option (MCQ)"], label="Question Types (select any combination)")
-            num_q = gr.Number(value=10, precision=0, label="Total Number of Questions")
-        with gr.Row():
-            q_per_page = gr.Number(value=0, precision=0, label="Questions per Page (0 = unlimited/auto-flow)")
-            spacing = gr.Slider(0, 60, value=18, step=2, label="Spacing Between Questions (pt)")
-            binding_gap = gr.Slider(0, 40, value=0, step=2, label="Binding Gap (mm, extra left margin)")
-        with gr.Row():
-            num_copies = gr.Number(value=1, precision=0, label="Number of Copies")
-            copy_mode = gr.Radio(["Identical", "Randomized"], value="Identical", label="Copy Mode")
-            visual_theme = gr.Radio(THEMES, value="Auto (based on grade)", label="Visual Theme")
-        with gr.Row():
-            show_name = gr.Checkbox(value=True, label="Show Student Name field")
-            show_class = gr.Checkbox(value=True, label="Show Class field")
-            show_roll = gr.Checkbox(value=True, label="Show Roll No. field")
-            show_date = gr.Checkbox(value=True, label="Show Date field")
-
-    shared_inputs = [school_name, logo_file, logo_size, cover_color,
-                      grade, subject, topic, language,
-                      q_types, num_q,
-                      q_per_page, spacing, binding_gap, num_copies, copy_mode,
-                      visual_theme,
-                      show_name, show_class, show_roll, show_date]
-
-    # ---------------- Method 1 ----------------
-    with gr.Accordion("📂 3. Method 1 — Curriculum-Based Generation", open=False):
-        gr.Markdown("Use **either** Path A or Path B. Use the 'Clear' button to reset a path you don't need.")
-        with gr.Tab("Path A — Upload File + Chapter/Topic/Page"):
-            m1a_file = gr.File(label="Upload Curriculum File (PDF/DOCX/TXT)")
-            with gr.Row():
-                m1a_chapter = gr.Textbox(label="Chapter")
-                m1a_topic = gr.Textbox(label="Topic")
-                m1a_page = gr.Textbox(label="Page No.")
-            with gr.Row():
-                m1a_generate = gr.Button("Generate from File ✨", variant="primary")
-                m1a_clear = gr.Button("Clear Path A")
-            m1a_preview = gr.Markdown()
-
-        with gr.Tab("Path B — Grade / Subject / Topic Dropdown"):
-            gr.Markdown("Uses the Grade / Subject / Topic selected above in Worksheet Settings.")
-            with gr.Row():
-                m1b_generate = gr.Button("Generate from Selection ✨", variant="primary")
-                m1b_clear = gr.Button("Clear Path B")
-            m1b_preview = gr.Markdown()
-
-    # ---------------- Method 2 ----------------
-    with gr.Accordion("📝 4. Method 2 — Paste or Upload Any Content", open=False):
-        m2_text = gr.Textbox(label="Paste content here (e.g. from ChatGPT, notes, textbook excerpt)", lines=8)
-        m2_file = gr.File(label="Or upload a file instead")
-        with gr.Row():
-            m2_generate = gr.Button("Clean & Generate ✨", variant="primary")
-            m2_clear = gr.Button("Clear")
-        m2_preview = gr.Markdown()
-
-    # ---------------- Method 3 ----------------
-    with gr.Accordion("🗂️ 5. Method 3 — Your Own Question Bank (no API key / no cost)", open=(not AI_ENABLED)):
-        gr.Markdown(
-            "Upload a CSV or Excel file with columns: `grade, subject, topic, q_type, text, options, "
-            "match_left, match_right, answer, image_keyword`. Use `|` to separate multiple options "
-            "(e.g. `Cat|Dog|Cow|Horse`). This works completely offline from AI — matches are filtered "
-            "using the Grade / Subject / Topic / Question Types set above in Worksheet Settings."
-        )
-        m3_file = gr.File(label="Upload Question Bank (CSV or XLSX)")
-        with gr.Row():
-            m3_generate = gr.Button("Load & Build Worksheet ✨", variant="primary")
-            m3_clear = gr.Button("Clear")
-        m3_preview = gr.Markdown()
-
-    # ---------------- Preview & Export ----------------
-    with gr.Accordion("👁️ 6. Preview & Export", open=True):
-        export_format = gr.Radio(["PDF", "Word"], value="PDF", label="Export Format")
-        create_btn = gr.Button("📄 Create Worksheet", variant="primary", size="lg")
-        status = gr.Markdown()
-        download_file = gr.File(label="Download Your Worksheet")
-
-    # ---------------- Wiring ----------------
-    m1a_generate.click(generate_method1_pathA,
-                        inputs=[m1a_file, m1a_chapter, m1a_topic, m1a_page] + shared_inputs,
-                        outputs=[m1a_preview, questions_state])
-    m1a_clear.click(lambda: (None, "", "", "", "", []), outputs=[m1a_file, m1a_chapter, m1a_topic, m1a_page, m1a_preview, questions_state])
-
-    m1b_generate.click(generate_method1_pathB, inputs=shared_inputs, outputs=[m1b_preview, questions_state])
-    m1b_clear.click(lambda: ("", []), outputs=[m1b_preview, questions_state])
-
-    m2_generate.click(generate_method2, inputs=[m2_text, m2_file] + shared_inputs, outputs=[m2_preview, questions_state])
-    m2_clear.click(lambda: ("", None, "", []), outputs=[m2_text, m2_file, m2_preview, questions_state])
-
-    m3_generate.click(generate_method3, inputs=[m3_file] + shared_inputs, outputs=[m3_preview, questions_state])
-    m3_clear.click(lambda: (None, "", []), outputs=[m3_file, m3_preview, questions_state])
-
-    create_btn.click(export_worksheet, inputs=[questions_state, export_format] + shared_inputs,
-                      outputs=[download_file, status])
-
-app.launch()
+            if len(paths) == 1:
+                with open(paths[0], "rb") as f:
+                    st.download_button("\u2b07\ufe0f Download Worksheet", f, file_name=os.path.basename(paths[0]))
+                st.success(f"Worksheet generated ({export_format}).")
+            else:
+                zip_path = shutil.make_archive(os.path.join(out_dir, "worksheets"), "zip", out_dir)
+                with open(zip_path, "rb") as f:
+                    st.download_button("\u2b07\ufe0f Download All Copies (.zip)", f, file_name="worksheets.zip")
+                st.success(f"{len(paths)} {export_format} copies generated and zipped.")save
