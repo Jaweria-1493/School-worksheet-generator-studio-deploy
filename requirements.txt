@@ -1,0 +1,13 @@
+gradio
+python-docx
+reportlab
+pdfplumber
+openpyxl
+arabic-reshaper
+python-bidi
+anthropic
+google-generativeai
+requests
+pandas
+pillow==10.4.0
+matplotlib
